@@ -1,87 +1,89 @@
 #!/usr/bin/env python3
 """One Word From Your Ex — make.fun bounty entry.
 
-Scores a small table of candidate single words an ex would use to
-describe the entrant on ex-voice (a word a real ex would actually say
-about a former partner), funniness (surprise, a sharp turn, lands
-harder than expected), sting (painfully true, and the entrant plainly
-knows it), instantness (lands at once, needs no explanation, cannot be
-swapped for a near synonym without losing its edge) and relatability
-(names something people have lived through too), picks the best,
-validates it against the competition gate (UTF-8 text of 1-24
-characters, exactly one word, not only whitespace), prints it and
-writes it to /output/entry.txt.
+The brief asks for exactly one word an ex would use to describe the
+entrant, judged on how funny and how painfully honest it is. This
+program rates a shortlist of such words on five fronts — whether it
+sounds like something a real ex would say, whether it makes you laugh,
+whether it stings because it is true, whether it lands with no
+explanation needed, and whether other people would recognise it from
+their own lives — then writes the highest-rated word to
+/output/entry.txt, the file the competition gate reads.
 """
 
 import os
+import re
 
-MAX_LEN = 24
+OUT_PATH = "/output/entry.txt"
+LIMIT = 24
 
-# Each candidate: (word, ex_voice, funny, sting, instant, relatable)
-# — scores out of 10.
-CANDIDATES = [
-    ("unavailable", 10, 9, 9, 10, 10),
-    ("forgettable", 9, 8, 10, 9, 9),
-    ("exhausting", 8, 8, 9, 9, 8),
-    ("clingy", 9, 7, 7, 10, 9),
-    ("distracted", 8, 7, 8, 9, 8),
-    ("selfish", 6, 5, 6, 10, 7),
-    ("avoidant", 9, 7, 8, 8, 8),
+# How much each judging front counts, in the order the judge lists them.
+CRITERIA = [
+    ("sounds_like_an_ex", 0.30),
+    ("funny", 0.20),
+    ("stings", 0.20),
+    ("instant", 0.15),
+    ("relatable", 0.15),
 ]
 
-WEIGHTS = {
-    "ex_voice": 0.30,
-    "funny": 0.20,
-    "sting": 0.20,
-    "instant": 0.15,
-    "relatable": 0.15,
+# Candidate words with a 0-10 mark on each front above.
+SHORTLIST = {
+    "unavailable": {"sounds_like_an_ex": 10, "funny": 9, "stings": 9, "instant": 10, "relatable": 10},
+    "forgettable": {"sounds_like_an_ex": 9, "funny": 8, "stings": 10, "instant": 9, "relatable": 9},
+    "exhausting": {"sounds_like_an_ex": 8, "funny": 8, "stings": 9, "instant": 9, "relatable": 8},
+    "clingy": {"sounds_like_an_ex": 9, "funny": 7, "stings": 7, "instant": 10, "relatable": 9},
+    "distracted": {"sounds_like_an_ex": 8, "funny": 7, "stings": 8, "instant": 9, "relatable": 8},
+    "avoidant": {"sounds_like_an_ex": 9, "funny": 7, "stings": 8, "instant": 8, "relatable": 8},
+    "selfish": {"sounds_like_an_ex": 6, "funny": 5, "stings": 6, "instant": 10, "relatable": 7},
+    # Added on a second pass: a plausible rival that still loses —
+    # it is accurate but too clinical to land instantly or to laugh at.
+    "inattentive": {"sounds_like_an_ex": 8, "funny": 6, "stings": 7, "instant": 7, "relatable": 8},
 }
 
 
-def score(candidate):
-    word, ex_voice, funny, sting, instant, relatable = candidate
-    return (
-        ex_voice * WEIGHTS["ex_voice"]
-        + funny * WEIGHTS["funny"]
-        + sting * WEIGHTS["sting"]
-        + instant * WEIGHTS["instant"]
-        + relatable * WEIGHTS["relatable"]
-    )
+def weighted_total(marks):
+    """Combine one word's marks into a single score out of 10."""
+    total = 0.0
+    for name, weight in CRITERIA:
+        total += marks[name] * weight
+    return total
 
 
-def validate(word):
-    """Gate check: 1-24 chars, exactly one word (no spaces, no
-    punctuation, letters only), not only whitespace."""
-    word = word.strip()
-    if not word:
+def ranked_words():
+    """Shortlist ordered best first; ties break towards the shorter word."""
+    scored = [(weighted_total(marks), word) for word, marks in SHORTLIST.items()]
+    scored.sort(key=lambda item: (-item[0], len(item[1])))
+    return scored
+
+
+def check_gate(word):
+    """Mirror the competition gate: one lowercase alphabetic word,
+    1-24 characters, nothing else."""
+    cleaned = word.strip()
+    if not cleaned:
         raise ValueError("entry is empty")
-    if len(word) > MAX_LEN:
-        raise ValueError(f"entry is {len(word)} chars, over the 24 limit")
-    if len(word.split()) != 1:
-        raise ValueError("entry must be exactly one word")
-    if not word.isalpha():
-        raise ValueError("entry must be a single alphabetic word")
-    if word != word.lower():
-        raise ValueError("entry must be lowercase")
-    return word
-
-
-def pick_best():
-    ranked = sorted(CANDIDATES, key=score, reverse=True)
-    return ranked[0][0], score(ranked[0])
+    if len(cleaned) > LIMIT:
+        raise ValueError(f"entry is {len(cleaned)} chars, over the {LIMIT} limit")
+    if not re.fullmatch(r"[a-z]+", cleaned):
+        raise ValueError("entry must be exactly one lowercase word")
+    return cleaned
 
 
 def main():
-    word, best_score = pick_best()
-    word = validate(word)
+    ranking = ranked_words()
+    best_score, word = ranking[0]
+    word = check_gate(word)
     print(word)
     print(f"[{len(word)} chars, score {best_score:.2f}]")
-    os.makedirs("/output", exist_ok=True)
-    with open("/output/entry.txt", "w", encoding="utf-8") as f:
-        f.write(word)
-    with open("/output/entry.txt", encoding="utf-8") as f:
-        assert f.read() == word, "read-back mismatch"
-    print("wrote /output/entry.txt")
+    for score, candidate in ranking:
+        print(f"  {candidate}: {score:.2f}")
+    os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
+    with open(OUT_PATH, "w", encoding="utf-8") as handle:
+        handle.write(word)
+    with open(OUT_PATH, encoding="utf-8") as handle:
+        if handle.read() != word:
+            raise ValueError("read-back mismatch")
+    print(f"wrote {OUT_PATH}")
 
 
 if __name__ == "__main__":
